@@ -1,0 +1,16 @@
+{
+  "name": "Open Payment Webhook Playground",
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "20"
+    }
+  },
+  "forwardPorts": [3000],
+  "portsAttributes": {
+    "3000": {
+      "label": "Webhook Server",
+      "visibility": "public"
+    }
+  },
+  "postCreateCommand": "npm install"
+}
