@@ -1,0 +1,55 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Open Payment Webhook Playground</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 24px; }
+    h1 { margin: 0 0 16px; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border: 1px solid #ddd; padding: 8px; font-size: 14px; }
+    th { background: #f6f6f6; text-align: left; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; }
+    .ok { color: #128a0c; }
+    .bad { color: #b00020; }
+  </style>
+</head>
+<body>
+  <h1>Webhook Events</h1>
+  <p id="info"></p>
+  <table>
+    <thead>
+      <tr>
+        <th>Time</th>
+        <th>Provider</th>
+        <th>Verified</th>
+        <th>ID</th>
+        <th>Link</th>
+      </tr>
+    </thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <script>
+    async function load() {
+      const r = await fetch("./events.json?ts=" + Date.now());
+      const list = await r.json();
+      const rows = document.getElementById("rows");
+      rows.innerHTML = "";
+      document.getElementById("info").textContent = "Total: " + list.length;
+      for (const ev of list) {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${new Date(ev.receivedAt).toLocaleString()}</td>
+          <td>${ev.provider}</td>
+          <td>${ev.verified ? '<span class="ok">✓</span>' : '<span class="bad">✗</span>'}</td>
+          <td><code>${ev.id}</code></td>
+          <td><a href="./events/${ev.id}.json" target="_blank">JSON</a></td>
+        `;
+        rows.appendChild(tr);
+      }
+    }
+    load();
+  </script>
+</body>
+</html>
