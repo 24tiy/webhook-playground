@@ -1,0 +1,31 @@
+name: Build Pages
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'data/**'
+      - '.github/workflows/pages.yml'
+      - 'docs/index.html'
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare docs
+        run: |
+          node -e "const fs=require('fs'),p=require('path');if(!fs.existsSync('docs'))fs.mkdirSync('docs');const src='data/events',dst='docs/events';if(!fs.existsSync(dst))fs.mkdirSync(dst,{recursive:true});let list=[];if(fs.existsSync(src)){for(const f of fs.readdirSync(src).filter(x=>x.endsWith('.json'))){const s=p.join(src,f),d=p.join(dst,f);fs.copyFileSync(s,d);try{list.push(JSON.parse(fs.readFileSync(s,'utf8')));}catch(e){}}}fs.writeFileSync('docs/events.json',JSON.stringify(list,null,2));"
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+  deploy:
+    needs: build
+    permissions:
+      pages: write
+      id-token: write
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
