@@ -9,11 +9,10 @@ export function stripeWebhookHandler(endpointSecret: string) {
     const sig = req.headers["stripe-signature"] as string | undefined;
     try {
       if (!sig) throw new Error("missing_signature");
-      const event = Stripe.webhooks.constructEvent(req.body, sig, endpointSecret);
+      const evt = Stripe.webhooks.constructEvent(req.body, sig, endpointSecret);
       verified = true;
-      payload = event;
+      payload = evt;
     } catch {
-      verified = false;
       try {
         payload = JSON.parse(Buffer.isBuffer(req.body) ? req.body.toString("utf8") : String(req.body || "{}"));
       } catch {
