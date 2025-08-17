@@ -1,0 +1,8 @@
+{
+  "id": "sample-1",
+  "provider": "stripe",
+  "verified": false,
+  "receivedAt": "2025-08-16T10:00:00.000Z",
+  "headers": {},
+  "payload": { "type": "test.event" }
+}
