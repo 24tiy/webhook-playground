@@ -1,110 +1,80 @@
 <!doctype html>
 <html>
 <head>
-  <meta charset="utf-8">
-  <title>Webhook Events</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <style>
-    body { font-family: system-ui, sans-serif; margin: 24px; }
-    h1 { margin: 0 0 16px; }
-    table { border-collapse: collapse; width: 100%; }
-    th, td { border: 1px solid #ddd; padding: 8px; font-size: 14px; }
-    th { background: #f6f6f6; text-align: left; }
-    code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; }
-    .ok { color: #128a0c; }
-    .bad { color: #b00020; }
-    .row { display: flex; gap: 12px; align-items: center; margin: 12px 0 20px; flex-wrap: wrap; }
-    input[type=text] { padding: 8px; border: 1px solid #ccc; border-radius: 6px; min-width: 260px; }
-    button { padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; background: #fff; cursor: pointer; }
-    button:disabled { opacity: .6; cursor: default; }
-    small { opacity: .7; }
-  </style>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Webhook Events</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+body{font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;margin:24px}
+h1{font-size:40px;margin:0 0 16px}
+.tools{display:flex;gap:12px;align-items:center;margin:12px 0 20px}
+input{padding:10px 12px;border:1px solid #ddd;border-radius:8px;min-width:280px}
+button{padding:10px 14px;border:1px solid #ddd;border-radius:8px;background:#fff;cursor:pointer}
+table{border-collapse:collapse;width:100%}
+th,td{border-top:1px solid #eee;padding:14px}
+th{text-align:left;background:#fafafa}
+.badge{display:inline-block;padding:2px 8px;border-radius:999px;background:#eee}
+.x{color:#b00;font-weight:700}
+.ok{color:#0a0}
+.count{font-weight:600}
+</style>
 </head>
 <body>
-  <h1>Webhook Events</h1>
-  <div class="row">
-    <span>Total: <b id="total">0</b></span>
-    <input id="q" type="text" placeholder="Search (provider, id, payload)">
-    <input id="codespace" type="text" placeholder="Codespace URL (https://...app.github.dev)" />
-    <button id="saveUrl">Save URL</button>
-    <button id="sync">Sync to Pages</button>
-    <small id="status"></small>
-  </div>
-  <table>
-    <thead>
+<h1>Webhook Events</h1>
+<div class="tools">
+  <div>Total: <span id="count" class="count">0</span></div>
+  <input id="q" placeholder="Search (provider, id, payload)" />
+  <button id="refresh">Refresh</button>
+</div>
+<table>
+  <thead>
+    <tr><th>Time</th><th>Provider</th><th>Verified</th><th>ID</th><th>Link</th></tr>
+  </thead>
+  <tbody id="rows"></tbody>
+</table>
+
+<script>
+const rows = document.getElementById('rows');
+const countEl = document.getElementById('count');
+const q = document.getElementById('q');
+const refreshBtn = document.getElementById('refresh');
+
+async function load() {
+  const ts = Date.now();
+  const res = await fetch('./events.json?ts=' + ts, {cache: 'no-store'});
+  const list = await res.json();
+  render(list);
+}
+
+function match(item, needle) {
+  const s = (JSON.stringify(item)||'').toLowerCase();
+  return s.includes(needle.toLowerCase());
+}
+
+function render(list) {
+  const needle = q.value.trim();
+  const filtered = needle ? list.filter(x => match(x, needle)) : list;
+  countEl.textContent = filtered.length.toString();
+  rows.innerHTML = filtered.map(x => {
+    const dt = new Date(x.receivedAt);
+    const ok = x.verified ? 'ok' : 'x';
+    return `
       <tr>
-        <th>Time</th>
-        <th>Provider</th>
-        <th>Verified</th>
-        <th>ID</th>
-        <th>Link</th>
+        <td>${dt.toLocaleString()}</td>
+        <td><span class="badge">${x.provider}</span></td>
+        <td class="${ok}">${x.verified ? '✓' : '✗'}</td>
+        <td><code>${x.id}</code></td>
+        <td><a href="./events/${x.id}.json" target="_blank">JSON</a></td>
       </tr>
-    </thead>
-    <tbody id="rows"></tbody>
-  </table>
-  <script>
-    const rows = document.getElementById("rows");
-    const total = document.getElementById("total");
-    const q = document.getElementById("q");
-    const codespace = document.getElementById("codespace");
-    const statusEl = document.getElementById("status");
-    const syncBtn = document.getElementById("sync");
-    const saveBtn = document.getElementById("saveUrl");
+    `;
+  }).join('');
+}
 
-    function getCodespaceUrl() { return localStorage.getItem("codespace_url") || ""; }
-    function setCodespaceUrl(v) { localStorage.setItem("codespace_url", v); }
-
-    async function load() {
-      const r = await fetch("./events.json?ts=" + Date.now());
-      const list = await r.json();
-      render(list);
-      return list;
-    }
-
-    function render(list) {
-      const term = (q.value || "").toLowerCase();
-      const filtered = list.filter(ev => {
-        if (!term) return true;
-        const hay = (ev.provider + " " + ev.id + " " + JSON.stringify(ev.payload)).toLowerCase();
-        return hay.includes(term);
-      });
-      rows.innerHTML = "";
-      total.textContent = String(filtered.length);
-      for (const ev of filtered) {
-        const tr = document.createElement("tr");
-        tr.innerHTML = `
-          <td>${new Date(ev.receivedAt).toLocaleString()}</td>
-          <td>${ev.provider}</td>
-          <td>${ev.verified ? '<span class="ok">✓</span>' : '<span class="bad">✗</span>'}</td>
-          <td><code>${ev.id}</code></td>
-          <td><a href="./events/${ev.id}.json" target="_blank">JSON</a></td>
-        `;
-        rows.appendChild(tr);
-      }
-    }
-
-    async function syncNow() {
-      const base = codespace.value || getCodespaceUrl();
-      if (!base) { statusEl.textContent = "Set Codespace URL first"; return; }
-      syncBtn.disabled = true;
-      statusEl.textContent = "Syncing...";
-      try {
-        const r = await fetch(base.replace(/\/$/, "") + "/persist", { method: "POST" });
-        if (!r.ok) throw new Error("persist failed");
-        statusEl.textContent = "Persist triggered. Wait for Pages to deploy, then refresh.";
-      } catch (e) {
-        statusEl.textContent = "Sync error";
-      } finally {
-        syncBtn.disabled = false;
-      }
-    }
-
-    q.addEventListener("input", () => load());
-    syncBtn.addEventListener("click", syncNow);
-    saveBtn.addEventListener("click", () => { setCodespaceUrl(codespace.value.trim()); statusEl.textContent = "URL saved"; });
-    codespace.value = getCodespaceUrl() || "";
-
-    load();
-  </script>
+q.addEventListener('input', load);
+refreshBtn.addEventListener('click', load);
+load();
+</script>
 </body>
 </html>
