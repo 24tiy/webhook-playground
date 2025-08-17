@@ -1,23 +1,30 @@
-import type { Request } from "express";
+import { Request, Response } from "express";
 import Stripe from "stripe";
-import { Provider, ProviderResult } from "./base.js";
+import { saveEvent, persist } from "../storage.js";
 
-const endpointSecret = process.env.STRIPE_ENDPOINT_SECRET || "";
-const stripe = new Stripe("sk_test_0", { apiVersion: "2023-10-16" });
+const stripe = new Stripe(process.env.STRIPE_API_KEY || "sk_test_dummy");
 
-export const stripeProvider: Provider = {
-  async verify(req: Request): Promise<ProviderResult> {
-    const sig = String(req.headers["stripe-signature"] || "");
-    if (!endpointSecret || !sig) {
-      const raw = JSON.parse(req.body.toString("utf8") || "{}");
-      return { verified: false, payload: raw };
-    }
+export function stripeWebhookHandler(cfg: { endpointSecret: string }) {
+  return async (req: Request, res: Response) => {
+    const sig = req.headers["stripe-signature"] as string | undefined;
+    let verified = false;
+    let payload: any = null;
     try {
-      const event = stripe.webhooks.constructEvent(req.body, sig, endpointSecret);
-      return { verified: true, payload: event };
+      if (cfg.endpointSecret && sig) {
+        const raw = Buffer.isBuffer((req as any).body) ? (req as any).body : Buffer.from((req as any).body || "");
+        const event = stripe.webhooks.constructEvent(raw, sig, cfg.endpointSecret);
+        payload = event;
+        verified = true;
+      } else {
+        const raw = Buffer.isBuffer((req as any).body) ? (req as any).body.toString("utf8") : ((req as any).body || "").toString?.() || "";
+        payload = raw ? JSON.parse(raw) : {};
+      }
     } catch {
-      const raw = JSON.parse(req.body.toString("utf8") || "{}");
-      return { verified: false, payload: raw };
+      payload = { parse_error: true };
+      verified = false;
     }
-  }
-};
+    const rec = saveEvent({ provider: "stripe", verified, headers: req.headers as any, payload });
+    persist().catch(() => {});
+    res.json({ ok: true, id: rec.id, verified });
+  };
+}
