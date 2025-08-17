@@ -1,70 +1,84 @@
 import "dotenv/config";
-import express, { Request, Response } from "express";
-import path from "path";
-import { fileURLToPath } from "url";
-import { stripeWebhookHandler } from "./providers/stripe.js";
-import { paypalWebhookHandler } from "./providers/paypal.js";
-import { adyenWebhookHandler } from "./providers/adyen.js";
-import { listEvents, getEventById, saveEvent, persist } from "./storage.js";
+import express, { Request, Response, NextFunction } from "express";
+import helmet from "helmet";
+import rateLimit from "express-rate-limit";
+import { stripeWebhookHandler } from "./providers/stripe";
+import { paypalWebhookHandler } from "./providers/paypal";
+import { adyenWebhookHandler } from "./providers/adyen";
+import { listEvents, persist, saveEvent } from "./storage";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 const app = express();
+
 const PORT = Number(process.env.PORT || 3000);
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "";
+const STRIPE_ENDPOINT_SECRET = process.env.STRIPE_ENDPOINT_SECRET || "";
+const PAYPAL_ENV = (process.env.PAYPAL_ENV as "sandbox" | "live") || "sandbox";
+const PAYPAL_WEBHOOK_ID = process.env.PAYPAL_WEBHOOK_ID || "";
+const PAYPAL_CLIENT_ID = process.env.PAYPAL_CLIENT_ID || "";
+const PAYPAL_CLIENT_SECRET = process.env.PAYPAL_CLIENT_SECRET || "";
+const ADYEN_HMAC_KEY = process.env.ADYEN_HMAC_KEY || "";
 
-app.post("/webhooks/stripe", express.raw({ type: "*/*" }), stripeWebhookHandler({ endpointSecret: process.env.STRIPE_ENDPOINT_SECRET || "" }));
-
+app.use(helmet());
 app.use(
-  express.json({
-    limit: "1mb",
-    verify: (req: any, _res, buf) => {
-      req.rawBody = buf;
-    }
+  rateLimit({
+    windowMs: 60_000,
+    max: 120
   })
 );
 
-app.post(
-  "/webhooks/paypal",
-  paypalWebhookHandler({
-    webhookId: process.env.PAYPAL_WEBHOOK_ID || "",
-    clientId: process.env.PAYPAL_CLIENT_ID || "",
-    clientSecret: process.env.PAYPAL_CLIENT_SECRET || "",
-    env: (process.env.PAYPAL_ENV as "sandbox" | "live") === "live" ? "live" : "sandbox"
-  })
-);
+const jsonParser = express.json({ limit: "1mb" });
+const rawStripe = express.raw({ type: "application/json", limit: "1mb" });
 
-app.post("/webhooks/adyen", adyenWebhookHandler({ hmacKey: process.env.ADYEN_HMAC_KEY || "" }));
+function adminAuth(req: Request, res: Response, next: NextFunction) {
+  const token = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
+  if (ADMIN_TOKEN) {
+    if (token && token === ADMIN_TOKEN) return next();
+    return res.status(401).json({ ok: false, error: "unauthorized" });
+  }
+  if (process.env.NODE_ENV === "production") {
+    return res.status(401).json({ ok: false, error: "unauthorized" });
+  }
+  next();
+}
 
-app.get("/", (_req, res) => res.json({ ok: true }));
-
-app.get("/events", (_req, res) => res.json(listEvents()));
-
-app.get("/events/:id", (req, res) => {
-  const ev = getEventById(req.params.id);
-  if (!ev) return res.status(404).json({ ok: false, error: "not_found" });
-  res.json(ev);
+app.get("/events", async (_req, res) => {
+  const list = await listEvents();
+  res.json(list);
 });
 
-app.post("/__test_write", (req: Request, res: Response) => {
-  const rec = saveEvent({ provider: "debug", verified: false, headers: req.headers as any, payload: req.body || { ping: true }, raw: (req as any).rawBody?.toString() || "" });
-  persist().catch(() => {});
+app.get("/__diag", adminAuth, async (_req, res) => {
+  const list = await listEvents();
+  res.json(list.__diag);
+});
+
+app.post("/__test_write", adminAuth, jsonParser, async (req, res) => {
+  const rec = await saveEvent({
+    provider: "debug",
+    verified: false,
+    headers: {},
+    payload: req.body && Object.keys(req.body).length ? req.body : { ping: true }
+  });
   res.json({ ok: true, id: rec.id });
 });
 
-app.get("/__diag", (_req, res) => {
-  res.json({
-    cwd: process.cwd(),
-    dataDir: path.join(process.cwd(), "data/events"),
-    files: listEvents().map((e) => `${e.id}.json`),
-    count: listEvents().length
-  });
-});
-
-app.use("/dashboard", express.static(path.join(process.cwd(), "docs")));
-
-app.post("/persist", async (_req, res) => {
-  await persist().catch(() => {});
+app.post("/persist", adminAuth, async (_req, res) => {
+  await persist();
   res.json({ ok: true });
 });
 
-app.listen(PORT);
+app.post("/webhooks/stripe", rawStripe, stripeWebhookHandler(STRIPE_ENDPOINT_SECRET));
+app.post(
+  "/webhooks/paypal",
+  jsonParser,
+  paypalWebhookHandler({
+    env: PAYPAL_ENV,
+    webhookId: PAYPAL_WEBHOOK_ID,
+    clientId: PAYPAL_CLIENT_ID,
+    clientSecret: PAYPAL_CLIENT_SECRET
+  })
+);
+app.post("/webhooks/adyen", jsonParser, adyenWebhookHandler({ hmacKey: ADYEN_HMAC_KEY }));
+
+app.listen(PORT, () => {
+  process.stdout.write(`listening on http://localhost:${PORT}\n`);
+});
