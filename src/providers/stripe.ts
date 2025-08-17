@@ -1,26 +1,23 @@
-import { Request, Response } from "express";
+import { Request } from "express";
 import Stripe from "stripe";
-import { saveEvent, persist } from "../storage";
+import { Provider } from "./base.js";
 
-export function stripeWebhookHandler(endpointSecret: string) {
-  return async (req: Request, res: Response) => {
-    let verified = false;
-    let payload: any = null;
-    const sig = req.headers["stripe-signature"] as string | undefined;
-    try {
-      if (!sig) throw new Error("missing_signature");
-      const evt = Stripe.webhooks.constructEvent(req.body, sig, endpointSecret);
-      verified = true;
-      payload = evt;
-    } catch {
+export function stripeProvider(secret: string): Provider {
+  const stripe = new Stripe("", { apiVersion: "2023-10-16" });
+  return {
+    identify() {
+      return "stripe";
+    },
+    async verify(req: Request) {
       try {
-        payload = JSON.parse(Buffer.isBuffer(req.body) ? req.body.toString("utf8") : String(req.body || "{}"));
+        const sig = req.headers["stripe-signature"] as string;
+        if (!sig) return false;
+        const raw = (req as any).rawBody as Buffer;
+        stripe.webhooks.constructEvent(raw, sig, secret);
+        return true;
       } catch {
-        payload = { raw: String(req.body || "") };
+        return false;
       }
     }
-    const rec = saveEvent({ provider: "stripe", verified, headers: req.headers as any, payload });
-    persist().catch(() => {});
-    res.json({ ok: true, id: rec.id, verified });
   };
 }
