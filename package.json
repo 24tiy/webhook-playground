@@ -7,13 +7,11 @@
     "dev": "tsx src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "persist": "node scripts/persist.js"
+    "persist": "git pull --rebase origin main || true && mkdir -p docs/events && cp -R data/events/. docs/events/ 2>/dev/null || true && node -e \"const fs=require('fs');const p='docs/events';let list=[];if(fs.existsSync(p)){for(const f of fs.readdirSync(p)){if(f.endsWith('.json')){try{list.push(JSON.parse(fs.readFileSync(p+'/'+f,'utf8')));}catch(e){}}}}list.sort((a,b)=>a.receivedAt<b.receivedAt?1:-1);fs.writeFileSync('docs/events.json',JSON.stringify(list,null,2));\" && git add data docs && git commit --allow-empty -m \"events\" && git push origin main"
   },
   "dependencies": {
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
-    "express-rate-limit": "^7.4.0",
-    "helmet": "^7.1.0",
     "stripe": "^16.6.0"
   },
   "devDependencies": {
