@@ -2,12 +2,12 @@ import fs from "fs";
 import path from "path";
 import { exec } from "child_process";
 
-const DATA_DIR = path.join(process.cwd(), "data");
+const DATA_DIR = path.resolve(process.cwd(), "data");
 const EVENTS_DIR = path.join(DATA_DIR, "events");
 
 function ensure() {
-  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR);
-  if (!fs.existsSync(EVENTS_DIR)) fs.mkdirSync(EVENTS_DIR);
+  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+  if (!fs.existsSync(EVENTS_DIR)) fs.mkdirSync(EVENTS_DIR, { recursive: true });
 }
 
 export type EventRecord = {
@@ -30,19 +30,21 @@ export function saveEvent(e: Omit<EventRecord, "id" | "receivedAt">) {
 
 export function listEvents(): EventRecord[] {
   ensure();
-  const files = fs.existsSync(EVENTS_DIR) ? fs.readdirSync(EVENTS_DIR).filter(f => f.endsWith(".json")) : [];
+  if (!fs.existsSync(EVENTS_DIR)) return [];
+  const files = fs.readdirSync(EVENTS_DIR).filter(f => f.endsWith(".json"));
   const list = files.map(f => JSON.parse(fs.readFileSync(path.join(EVENTS_DIR, f), "utf8")));
   return list.sort((a, b) => (a.receivedAt < b.receivedAt ? 1 : -1));
 }
 
 export function getEventById(id: string): EventRecord | null {
+  ensure();
   const file = path.join(EVENTS_DIR, `${id}.json`);
   if (!fs.existsSync(file)) return null;
   return JSON.parse(fs.readFileSync(file, "utf8"));
 }
 
 export function persist(): Promise<void> {
-  return new Promise((resolve) => {
-    exec('git add data && git commit -m "events" || true && git push origin main', () => resolve());
+  return new Promise(resolve => {
+    exec('git pull --rebase origin main || true && git add data && git commit -m "events" || true && git push origin main', () => resolve());
   });
 }
