@@ -1,5 +1,5 @@
 import { Request, Response } from "express";
-import { saveEvent } from "../storage";
+import { saveEvent, persist } from "../storage";
 import crypto from "crypto";
 
 function base64(key: string) {
@@ -38,6 +38,7 @@ export function adyenWebhookHandler(hmacKey: string) {
       });
     }
     const rec = saveEvent({ provider: "adyen", verified, headers: req.headers as any, payload });
+    persist().catch(() => {});
     res.json({ ok: true, id: rec.id, verified });
   };
 }
