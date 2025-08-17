@@ -1,71 +1,69 @@
 import "dotenv/config";
 import express from "express";
-import fs from "fs";
-import path from "path";
-import { fileURLToPath } from "url";
+import cors from "cors";
+import bodyParser from "body-parser";
+import { ENV, ENABLED } from "./lib/env";
+import { log } from "./lib/logger";
+import { saveEvent, listEvents, getEventById, persist } from "./storage";
 import { stripeWebhookHandler } from "./providers/stripe";
 import { paypalWebhookHandler } from "./providers/paypal";
 import { adyenWebhookHandler } from "./providers/adyen";
-import { saveEvent, listEvents, persist } from "./storage";
+import { authRequired } from "./middleware/auth";
 
 const app = express();
-const PORT = Number(process.env.PORT || 3000);
-const AUTH_TOKEN = process.env.AUTH_TOKEN || "";
-const STRICT = (process.env.STRICT_VERIFY || "true").toLowerCase() !== "false";
+app.set("trust proxy", true);
 
-function requireAuth(req: express.Request, res: express.Response, next: express.NextFunction) {
-  if (!AUTH_TOKEN) return res.status(500).json({ ok: false, error: "AUTH_TOKEN not set" });
-  const h = String(req.headers.authorization || "");
-  const got = h.startsWith("Bearer ") ? h.slice(7) : "";
-  if (got !== AUTH_TOKEN) return res.status(401).json({ ok: false, error: "unauthorized" });
-  next();
-}
-
-app.get("/__diag", (req, res) => {
-  const dataDir = path.resolve(process.cwd(), "data/events");
-  const files = fs.existsSync(dataDir) ? fs.readdirSync(dataDir).filter(f => f.endsWith(".json")) : [];
-  res.json({ cwd: process.cwd(), dataDir, files, count: files.length });
+app.use((req, res, next) => {
+  if (req.path === "/webhooks/stripe") {
+    bodyParser.raw({ type: "*/*" })(req, res, () => {
+      (req as any).rawBody = req.body;
+      try {
+        (req as any).body = JSON.parse(req.body.toString("utf8"));
+      } catch {}
+      next();
+    });
+  } else {
+    bodyParser.json({ limit: "1mb" })(req, res, next);
+  }
 });
 
-app.post("/__test_write", requireAuth, express.json(), async (req, res) => {
-  const rec = saveEvent({ provider: "debug", verified: false, headers: {}, payload: { ping: true } });
-  await persist().catch(() => {});
+app.use(cors());
+
+app.get("/__diag", (_req, res) => {
+  const events = listEvents();
+  res.json({
+    cwd: process.cwd(),
+    dataDir: `${process.cwd()}/data/events`,
+    files: events.map(e => `${e.id}.json`),
+    count: events.length
+  });
+});
+
+app.post("/__test_write", authRequired, (req, res) => {
+  const rec = saveEvent({
+    id: "",
+    provider: "debug",
+    verified: false,
+    headers: {},
+    payload: req.body && Object.keys(req.body).length ? req.body : { ping: true }
+  });
+  persist().catch(() => {});
   res.json({ ok: true, id: rec.id });
 });
 
-app.get("/events", (req, res) => {
-  res.json(listEvents());
+app.get("/events", (_req, res) => res.json(listEvents()));
+app.get("/events/:id", (req, res) => {
+  const ev = getEventById(req.params.id);
+  if (!ev) return res.status(404).json({ ok: false, error: "not_found" });
+  res.json(ev);
 });
 
-app.post(
-  "/webhooks/stripe",
-  express.raw({ type: "application/json" }),
-  stripeWebhookHandler({
-    endpointSecret: process.env.STRIPE_ENDPOINT_SECRET || ""
-  })
-);
+app.post("/webhooks/stripe", stripeWebhookHandler());
+app.post("/webhooks/paypal", paypalWebhookHandler());
+app.post("/webhooks/adyen", adyenWebhookHandler());
 
-app.post(
-  "/webhooks/paypal",
-  express.json(),
-  paypalWebhookHandler({
-    webhookId: process.env.PAYPAL_WEBHOOK_ID || "",
-    clientId: process.env.PAYPAL_CLIENT_ID || "",
-    clientSecret: process.env.PAYPAL_CLIENT_SECRET || "",
-    env: (process.env.PAYPAL_ENV as "sandbox" | "live") || "sandbox"
-  })
-);
+app.get("/", (_req, res) => res.json({ ok: true, name: "webhook-playground" }));
 
-app.post(
-  "/webhooks/adyen",
-  express.json(),
-  adyenWebhookHandler({
-    hmacKey: process.env.ADYEN_HMAC_KEY || "",
-    allowlistCurrencies: (process.env.ADYEN_ALLOWLIST_CURRENCIES || "")
-      .split(",")
-      .map(s => s.trim())
-      .filter(Boolean)
-  })
-);
-
-app.listen(PORT, () => {});
+app.listen(ENV.PORT, () => {
+  log.info({ port: ENV.PORT, enabled: ENABLED }, "Server started");
+});
