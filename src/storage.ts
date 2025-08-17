@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { exec } from "child_process";
 
 const DATA_DIR = path.join(process.cwd(), "data");
 const EVENTS_DIR = path.join(DATA_DIR, "events");
@@ -38,4 +39,10 @@ export function getEventById(id: string): EventRecord | null {
   const file = path.join(EVENTS_DIR, `${id}.json`);
   if (!fs.existsSync(file)) return null;
   return JSON.parse(fs.readFileSync(file, "utf8"));
+}
+
+export function persist(): Promise<void> {
+  return new Promise((resolve) => {
+    exec('git add data && git commit -m "events" || true && git push origin main', () => resolve());
+  });
 }
