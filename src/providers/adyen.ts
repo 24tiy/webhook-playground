@@ -1,43 +1,45 @@
+import crypto from "crypto";
 import { Request, Response } from "express";
 import { saveEvent, persist } from "../storage";
-import crypto from "crypto";
 
-function base64(key: string) {
-  try {
-    return Buffer.from(key, "base64");
-  } catch {
-    return Buffer.from(key, "utf8");
-  }
-}
-
-function signString(item: any) {
-  const fields = [
-    item.pspReference || "",
-    item.originalReference || "",
-    item.merchantAccountCode || "",
-    item.merchantReference || "",
-    item.amount?.value ?? "",
-    item.amount?.currency ?? "",
-    item.eventCode || "",
-    String(item.success ?? "")
+function signString(v: any) {
+  const arr = [
+    v.pspReference || "",
+    v.originalReference || "",
+    v.merchantAccountCode || "",
+    v.merchantReference || "",
+    v.amount?.value?.toString() || "",
+    v.amount?.currency || "",
+    v.eventCode || "",
+    v.success || ""
   ];
-  return fields.join(":");
+  return arr.join(":");
 }
 
-export function adyenWebhookHandler(hmacKey: string) {
-  const key = base64(hmacKey || "");
-  return (req: Request, res: Response) => {
-    const payload = req.body;
+function verifyItem(item: any, hmacKeyBase64: string) {
+  const v = item?.NotificationRequestItem || item;
+  const given = v?.additionalData?.hmacSignature || v?.additionalData?.["hmacSignature"];
+  if (!given) return false;
+  const key = Buffer.from(hmacKeyBase64, "base64");
+  const data = signString(v);
+  const mac = crypto.createHmac("sha256", key).update(data, "utf8").digest("base64");
+  return mac === given;
+}
+
+export function adyenWebhookHandler(hmacKeyBase64: string) {
+  return async (req: Request, res: Response) => {
     let verified = false;
-    if (payload && Array.isArray(payload.notificationItems)) {
-      const items = payload.notificationItems.map((it: any) => it.NotificationRequestItem || it);
-      verified = items.every((it: any) => {
-        const expected = crypto.createHmac("sha256", key).update(signString(it), "utf8").digest("base64");
-        const provided = String((it.additionalData || {}).hmacSignature || (it.additionalData || {})["hmacSignature"] || "");
-        return expected === provided;
-      });
+    let body = req.body;
+    try {
+      if (Array.isArray(body?.notificationItems)) {
+        verified = body.notificationItems.every((x: any) => verifyItem(x, hmacKeyBase64));
+      } else {
+        verified = verifyItem(body, hmacKeyBase64);
+      }
+    } catch {
+      verified = false;
     }
-    const rec = saveEvent({ provider: "adyen", verified, headers: req.headers as any, payload });
+    const rec = saveEvent({ provider: "adyen", verified, headers: req.headers as any, payload: body });
     persist().catch(() => {});
     res.json({ ok: true, id: rec.id, verified });
   };
