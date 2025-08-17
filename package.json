@@ -1,26 +1,23 @@
 {
   "name": "open-payment-webhook-playground",
   "version": "1.0.0",
-  "main": "src/index.ts",
-  "license": "MIT",
-  "type": "module",
+  "private": true,
+  "type": "commonjs",
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "persist": "git pull --rebase origin main || true && mkdir -p docs/events && cp -R data/events/. docs/events/ 2>/dev/null || true && node -e \"const fs=require(\\\"fs\\\");const p=\\\"docs/events\\\";let list=[];if(fs.existsSync(p)){for(const f of fs.readdirSync(p)){if(f.endsWith(\\\".json\\\")){try{list.push(JSON.parse(fs.readFileSync(p+\\\"/\\\"+f,\\\"utf8\\\")));}catch(e){}}}}list.sort((a,b)=>a.receivedAt<b.receivedAt?1:-1);fs.writeFileSync(\\\"docs/events.json\\\",JSON.stringify(list,null,2));\" && git add data docs && git commit --allow-empty -m \"events\" && git push origin main"
+    "persist": "git pull --rebase origin main || true && node scripts/export-docs.js && git add data docs && git commit --allow-empty -m \"events\" && git push origin main"
   },
   "dependencies": {
-    "axios": "^1.7.2",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
-    "stripe": "^15.8.0"
+    "stripe": "^16.6.0"
   },
   "devDependencies": {
     "@types/express": "^4.17.21",
-    "@types/node": "^20.12.7",
-    "ts-node": "^10.9.2",
+    "@types/node": "^22.7.4",
     "ts-node-dev": "^2.0.0",
-    "typescript": "^5.4.3"
+    "typescript": "^5.6.2"
   }
 }
