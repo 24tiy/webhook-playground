@@ -1,6 +1,6 @@
 import fetch from "node-fetch";
 import { Request, Response } from "express";
-import { saveEvent } from "../storage";
+import { saveEvent, persist } from "../storage";
 
 async function token(clientId: string, secret: string, env: "sandbox" | "live") {
   const base = env === "live" ? "https://api-m.paypal.com" : "https://api-m.sandbox.paypal.com";
@@ -33,6 +33,7 @@ export function paypalWebhookHandler(cfg: { webhookId: string; clientId: string;
       verified = false;
     }
     const rec = saveEvent({ provider: "paypal", verified, headers: req.headers as any, payload: req.body });
+    persist().catch(() => {});
     res.json({ ok: true, id: rec.id, verified });
   };
 }
