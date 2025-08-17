@@ -1,100 +1,65 @@
+import fs from "fs";
 import path from "path";
-import { promises as fs } from "fs";
-import { randomUUID } from "crypto";
+import crypto from "crypto";
 
-type SaveArgs = {
-  provider: string;
-  verified: boolean;
-  headers: Record<string, any>;
-  payload: any;
-};
+const dataDir = path.resolve(process.cwd(), "data/events");
+if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 
-const DATA_DIR = path.join(process.cwd(), "data", "events");
-const DOCS_DIR = path.join(process.cwd(), "docs", "events");
-const RETAIN_MAX = Number(process.env.RETAIN_MAX || 500);
+type SaveInput = { provider: string; verified: boolean; headers: any; payload: any };
 
-async function atomicWriteJSON(dir: string, name: string, data: any) {
-  await fs.mkdir(dir, { recursive: true });
-  const tmp = path.join(dir, `${name}.tmp`);
-  const fin = path.join(dir, `${name}.json`);
-  await fs.writeFile(tmp, JSON.stringify(data, null, 2), { encoding: "utf8", mode: 0o644 });
-  await fs.rename(tmp, fin);
+const seen = new Set<string>();
+
+function tryEventKey(provider: string, payload: any) {
+  const id = payload?.id || payload?.eventId || payload?.pspReference || null;
+  return id ? `${provider}:${id}` : null;
 }
 
-async function cleanup(dir: string) {
-  try {
-    const files = (await fs.readdir(dir)).filter(f => f.endsWith(".json")).sort();
-    if (files.length <= RETAIN_MAX) return;
-    const toDelete = files.slice(0, files.length - RETAIN_MAX);
-    for (const f of toDelete) {
-      try {
-        await fs.unlink(path.join(dir, f));
-      } catch {}
-    }
-  } catch {}
-}
-
-export async function saveEvent(args: SaveArgs) {
-  const id = `${Date.now()}-${randomUUID().slice(0, 6)}`;
-  const record = {
-    id,
-    receivedAt: new Date().toISOString(),
-    provider: args.provider,
-    verified: args.verified,
-    headers: args.headers || {},
-    payload: args.payload
-  };
-  await atomicWriteJSON(DATA_DIR, id, record);
-  await cleanup(DATA_DIR);
-  return record;
-}
-
-export async function listEvents() {
-  await fs.mkdir(DATA_DIR, { recursive: true });
-  const files = (await fs.readdir(DATA_DIR)).filter(f => f.endsWith(".json"));
-  const items: any[] = [];
-  for (const f of files) {
-    try {
-      const j = JSON.parse(await fs.readFile(path.join(DATA_DIR, f), "utf8"));
-      items.push(j);
-    } catch {}
+export function saveEvent(input: SaveInput) {
+  const key = tryEventKey(input.provider, input.payload);
+  if (key && seen.has(key)) {
+    const id = `${Date.now()}-dup-${Math.random().toString(36).slice(2, 6)}`;
+    const record = { id, provider: input.provider, verified: input.verified, receivedAt: new Date().toISOString(), headers: input.headers, payload: input.payload, duplicateOf: key };
+    const fp = path.join(dataDir, `${id}.json`);
+    fs.writeFileSync(fp, JSON.stringify(record, null, 2));
+    return { id };
   }
-  items.sort((a, b) => (a.receivedAt < b.receivedAt ? 1 : -1));
-  return {
-    items,
-    __diag: {
-      cwd: process.cwd(),
-      dataDir: DATA_DIR,
-      files,
-      count: files.length
-    }
-  };
+  if (key) seen.add(key);
+
+  const id = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+  const record = { id, provider: input.provider, verified: input.verified, receivedAt: new Date().toISOString(), headers: input.headers, payload: input.payload };
+  const fp = path.join(dataDir, `${id}.json`);
+  fs.writeFileSync(fp, JSON.stringify(record, null, 2));
+  return { id };
 }
 
-export async function getEventById(id: string) {
-  const p = path.join(DATA_DIR, `${id}.json`);
-  const raw = await fs.readFile(p, "utf8");
-  return JSON.parse(raw);
+export function listEvents() {
+  if (!fs.existsSync(dataDir)) return [];
+  const files = fs.readdirSync(dataDir).filter(f => f.endsWith(".json"));
+  const list = files.map(f => {
+    try { return JSON.parse(fs.readFileSync(path.join(dataDir, f), "utf8")); } catch { return null; }
+  }).filter(Boolean) as any[];
+  list.sort((a, b) => (a.receivedAt < b.receivedAt ? 1 : -1));
+  return list;
+}
+
+export function getEventById(id: string) {
+  const fp = path.join(dataDir, `${id}.json`);
+  if (!fs.existsSync(fp)) return null;
+  try { return JSON.parse(fs.readFileSync(fp, "utf8")); } catch { return null; }
 }
 
 export async function persist() {
-  await fs.mkdir(DOCS_DIR, { recursive: true });
-  const files = (await fs.readdir(DATA_DIR).catch(() => [] as string[])).filter(f => f.endsWith(".json"));
+  const docsDir = path.resolve(process.cwd(), "docs");
+  const targetDir = path.join(docsDir, "events");
+  if (!fs.existsSync(docsDir)) fs.mkdirSync(docsDir, { recursive: true });
+  if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
+
+  const files = fs.readdirSync(dataDir).filter(f => f.endsWith(".json"));
   for (const f of files) {
-    const src = path.join(DATA_DIR, f);
-    const dst = path.join(DOCS_DIR, f);
-    try {
-      await fs.copyFile(src, dst);
-    } catch {}
+    const src = path.join(dataDir, f);
+    const dst = path.join(targetDir, f);
+    fs.copyFileSync(src, dst);
   }
-  const docsFiles = (await fs.readdir(DOCS_DIR)).filter(f => f.endsWith(".json"));
-  const list: any[] = [];
-  for (const f of docsFiles) {
-    try {
-      const j = JSON.parse(await fs.readFile(path.join(DOCS_DIR, f), "utf8"));
-      list.push(j);
-    } catch {}
-  }
-  list.sort((a, b) => (a.receivedAt < b.receivedAt ? 1 : -1));
-  await fs.writeFile(path.join(process.cwd(), "docs", "events.json"), JSON.stringify(list, null, 2), "utf8");
+  const list = listEvents();
+  fs.writeFileSync(path.join(docsDir, "events.json"), JSON.stringify(list, null, 2));
 }
