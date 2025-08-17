@@ -115,5 +115,4 @@ npm run persist
 | Adyen    | `ADYEN_HMAC_KEY`                                                              |
 
 ## License
-
-MIT
+[MIT](https://github.com/24tiy/webhook-playground/blob/main/license)
