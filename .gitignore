@@ -2,3 +2,7 @@ node_modules/
 .env
 .dist/
 dist/
+
+# build artefacts
+/docs/events.json
+/docs/events/*.json
