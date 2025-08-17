@@ -1,80 +1,71 @@
 <!doctype html>
 <html>
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Webhook Events</title>
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Webhook Playground</title>
 <style>
-body{font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;margin:24px}
-h1{font-size:40px;margin:0 0 16px}
-.tools{display:flex;gap:12px;align-items:center;margin:12px 0 20px}
-input{padding:10px 12px;border:1px solid #ddd;border-radius:8px;min-width:280px}
-button{padding:10px 14px;border:1px solid #ddd;border-radius:8px;background:#fff;cursor:pointer}
-table{border-collapse:collapse;width:100%}
-th,td{border-top:1px solid #eee;padding:14px}
-th{text-align:left;background:#fafafa}
-.badge{display:inline-block;padding:2px 8px;border-radius:999px;background:#eee}
-.x{color:#b00;font-weight:700}
-.ok{color:#0a0}
-.count{font-weight:600}
+body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif;margin:20px}
+h1{margin:0 0 16px}
+.controls{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
+input,select{padding:8px;border:1px solid #ccc;border-radius:6px}
+table{width:100%;border-collapse:collapse}
+th,td{border-bottom:1px solid #eee;padding:8px;text-align:left;font-size:14px;vertical-align:top}
+.badge{display:inline-block;padding:2px 6px;border-radius:999px;font-size:12px}
+.ok{background:#e8f5e9;color:#1b5e20}
+.fail{background:#ffebee;color:#b71c1c}
+.time{white-space:nowrap}
+pre{white-space:pre-wrap;max-width:680px}
 </style>
 </head>
 <body>
-<h1>Webhook Events</h1>
-<div class="tools">
-  <div>Total: <span id="count" class="count">0</span></div>
-  <input id="q" placeholder="Search (provider, id, payload)" />
-  <button id="refresh">Refresh</button>
+<h1>Webhook Playground</h1>
+<div class="controls">
+  <input id="q" placeholder="filter...">
+  <select id="prov"><option value="">provider: any</option><option>stripe</option><option>paypal</option><option>adyen</option><option>debug</option></select>
+  <select id="ver"><option value="">verified: any</option><option value="true">true</option><option value="false">false</option></select>
+  <button id="reload">reload</button>
 </div>
-<table>
-  <thead>
-    <tr><th>Time</th><th>Provider</th><th>Verified</th><th>ID</th><th>Link</th></tr>
-  </thead>
-  <tbody id="rows"></tbody>
+<table id="t">
+  <thead><tr><th>time</th><th>provider</th><th>verified</th><th>id</th><th>summary</th></tr></thead>
+  <tbody></tbody>
 </table>
-
 <script>
-const rows = document.getElementById('rows');
-const countEl = document.getElementById('count');
-const q = document.getElementById('q');
-const refreshBtn = document.getElementById('refresh');
-
 async function load() {
-  const ts = Date.now();
-  const res = await fetch('./events.json?ts=' + ts, {cache: 'no-store'});
-  const list = await res.json();
-  render(list);
+  const res = await fetch('events.json', {cache:'no-store'});
+  const data = await res.json();
+  return Array.isArray(data) ? data : [];
 }
-
-function match(item, needle) {
-  const s = (JSON.stringify(item)||'').toLowerCase();
-  return s.includes(needle.toLowerCase());
+function match(row, q, prov, ver) {
+  if (prov && row.provider !== prov) return false;
+  if (ver && String(row.verified) !== ver) return false;
+  if (!q) return true;
+  const s = JSON.stringify(row).toLowerCase();
+  return s.includes(q.toLowerCase());
 }
-
-function render(list) {
-  const needle = q.value.trim();
-  const filtered = needle ? list.filter(x => match(x, needle)) : list;
-  countEl.textContent = filtered.length.toString();
-  rows.innerHTML = filtered.map(x => {
-    const dt = new Date(x.receivedAt);
-    const ok = x.verified ? 'ok' : 'x';
-    return `
-      <tr>
-        <td>${dt.toLocaleString()}</td>
-        <td><span class="badge">${x.provider}</span></td>
-        <td class="${ok}">${x.verified ? '✓' : '✗'}</td>
-        <td><code>${x.id}</code></td>
-        <td><a href="./events/${x.id}.json" target="_blank">JSON</a></td>
-      </tr>
-    `;
-  }).join('');
+function draw(rows) {
+  const q = document.getElementById('q').value.trim();
+  const prov = document.getElementById('prov').value.trim();
+  const ver = document.getElementById('ver').value.trim();
+  const body = document.querySelector('#t tbody');
+  body.innerHTML = '';
+  rows.filter(r => match(r,q,prov,ver)).forEach(r => {
+    const tr = document.createElement('tr');
+    const tdTime = document.createElement('td'); tdTime.className='time'; tdTime.textContent = r.receivedAt || ''; tr.appendChild(tdTime);
+    const tdProv = document.createElement('td'); tdProv.textContent = r.provider; tr.appendChild(tdProv);
+    const tdVer = document.createElement('td'); const b = document.createElement('span'); b.className='badge ' + (r.verified?'ok':'fail'); b.textContent = String(r.verified); tdVer.appendChild(b); tr.appendChild(tdVer);
+    const tdId = document.createElement('td'); tdId.textContent = r.id; tr.appendChild(tdId);
+    const tdSum = document.createElement('td'); const pre = document.createElement('pre'); pre.textContent = JSON.stringify(r.payload).slice(0,500); tdSum.appendChild(pre); tr.appendChild(tdSum);
+    body.appendChild(tr);
+  });
 }
-
-q.addEventListener('input', load);
-refreshBtn.addEventListener('click', load);
-load();
+let rows = [];
+async function refresh() { rows = await load(); draw(rows); }
+document.getElementById('reload').onclick = refresh;
+document.getElementById('q').oninput = () => draw(rows);
+document.getElementById('prov').onchange = () => draw(rows);
+document.getElementById('ver').onchange = () => draw(rows);
+refresh();
 </script>
 </body>
 </html>
