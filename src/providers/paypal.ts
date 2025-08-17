@@ -1,11 +1,10 @@
-import fetch from "node-fetch";
 import { Request, Response } from "express";
 import { saveEvent, persist } from "../storage";
 
 async function token(clientId: string, secret: string, env: "sandbox" | "live") {
   const base = env === "live" ? "https://api-m.paypal.com" : "https://api-m.sandbox.paypal.com";
   const creds = Buffer.from(`${clientId}:${secret}`).toString("base64");
-  const r = await fetch(base + "/v1/oauth2/token", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded", "accept": "application/json", "authorization": `Basic ${creds}` }, body: "grant_type=client_credentials" } as any);
+  const r = await fetch(base + "/v1/oauth2/token", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded", "accept": "application/json", "authorization": `Basic ${creds}` }, body: "grant_type=client_credentials" });
   const j = await r.json();
   return j.access_token as string;
 }
