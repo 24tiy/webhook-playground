@@ -1,42 +1,51 @@
 import { Request, Response } from "express";
 import crypto from "crypto";
-import { saveEvent, persist } from "../storage.js";
+import { saveEvent } from "../storage";
 
-function signString(i: any) {
-  const p = i.NotificationRequestItem || i;
-  const vals = [
-    p.pspReference || "",
-    p.originalReference || "",
-    p.merchantAccountCode || "",
-    p.merchantReference || "",
-    p.amount && typeof p.amount.value !== "undefined" ? String(p.amount.value) : "",
-    (p.amount && p.amount.currency) || "",
-    p.eventCode || "",
-    typeof p.success === "string" ? p.success : p.success ? "true" : "false"
-  ];
-  return vals.join(":");
+function toKeyBytes(k: string) {
+  if (/^[0-9a-fA-F]+$/.test(k)) return Buffer.from(k, "hex");
+  return Buffer.from(k, "base64");
 }
 
-function verifyItem(i: any, base64Key: string) {
-  const data = signString(i);
-  const key = Buffer.from(base64Key, "base64");
-  const h = crypto.createHmac("sha256", key).update(data, "utf8").digest("base64");
-  const provided = i.NotificationRequestItem?.additionalData?.hmacSignature || i.additionalData?.hmacSignature || "";
-  return h === provided;
+function signingData(i: any) {
+  const n = i || {};
+  const a = n.amount || {};
+  const fields = [
+    n.pspReference || "",
+    n.originalReference || "",
+    n.merchantAccountCode || "",
+    n.merchantReference || "",
+    String(a.value ?? ""),
+    String(a.currency ?? ""),
+    n.eventCode || "",
+    String(n.success ?? "")
+  ];
+  return fields.join(":");
+}
+
+function validateItem(hmacKey: string, item: any) {
+  const k = toKeyBytes(hmacKey);
+  const data = signingData(item);
+  const mac = crypto.createHmac("sha256", k).update(data, "utf8").digest("base64");
+  const sig = (((item.additionalData || {})["hmacSignature"] || "") + "").trim();
+  return mac === sig;
 }
 
 export function adyenWebhookHandler(cfg: { hmacKey: string }) {
   return async (req: Request, res: Response) => {
-    let verified = false;
-    try {
-      const items = Array.isArray(req.body?.notificationItems) ? req.body.notificationItems : [];
-      verified = !!cfg.hmacKey && items.length > 0 && items.every((it) => verifyItem(it, cfg.hmacKey));
-    } catch {
-      verified = false;
+    const body = req.body || {};
+    const list = Array.isArray(body.notificationItems) ? body.notificationItems : [];
+    let allOk = true;
+    for (const w of list) {
+      const i = (w && w.NotificationRequestItem) || {};
+      if (!validateItem(cfg.hmacKey, i)) allOk = false;
     }
-    const raw = (req as any).rawBody?.toString() || JSON.stringify(req.body || {});
-    const rec = saveEvent({ provider: "adyen", verified, headers: req.headers as any, payload: req.body, raw });
-    persist().catch(() => {});
-    res.json({ ok: true, id: rec.id, verified });
+    const rec = await saveEvent({
+      provider: "adyen",
+      verified: allOk,
+      headers: req.headers as any,
+      payload: body
+    });
+    res.json({ ok: true, id: rec.id, verified: allOk });
   };
 }
