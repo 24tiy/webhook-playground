@@ -1,6 +1,10 @@
-import { Request } from "express";
+import type { Request } from "express";
+
+export interface ProviderResult {
+  verified: boolean;
+  payload: any;
+}
 
 export interface Provider {
-  verify(req: Request): Promise<boolean>;
-  identify(): string;
+  verify(req: Request): Promise<ProviderResult>;
 }
