@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Webhook Playground</title>
+  <title>Webhook Events</title>
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <style>
     body { font-family: system-ui, sans-serif; margin: 24px; }
@@ -10,14 +10,26 @@
     table { border-collapse: collapse; width: 100%; }
     th, td { border: 1px solid #ddd; padding: 8px; font-size: 14px; }
     th { background: #f6f6f6; text-align: left; }
-    code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; }
     .ok { color: #128a0c; }
     .bad { color: #b00020; }
+    .row { display: flex; gap: 12px; align-items: center; margin: 12px 0 20px; flex-wrap: wrap; }
+    input[type=text] { padding: 8px; border: 1px solid #ccc; border-radius: 6px; min-width: 260px; }
+    button { padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; background: #fff; cursor: pointer; }
+    button:disabled { opacity: .6; cursor: default; }
+    small { opacity: .7; }
   </style>
 </head>
 <body>
   <h1>Webhook Events</h1>
-  <p id="info"></p>
+  <div class="row">
+    <span>Total: <b id="total">0</b></span>
+    <input id="q" type="text" placeholder="Search (provider, id, payload)">
+    <input id="codespace" type="text" placeholder="Codespace URL (https://...app.github.dev)" />
+    <button id="saveUrl">Save URL</button>
+    <button id="sync">Sync to Pages</button>
+    <small id="status"></small>
+  </div>
   <table>
     <thead>
       <tr>
@@ -31,13 +43,34 @@
     <tbody id="rows"></tbody>
   </table>
   <script>
+    const rows = document.getElementById("rows");
+    const total = document.getElementById("total");
+    const q = document.getElementById("q");
+    const codespace = document.getElementById("codespace");
+    const statusEl = document.getElementById("status");
+    const syncBtn = document.getElementById("sync");
+    const saveBtn = document.getElementById("saveUrl");
+
+    function getCodespaceUrl() { return localStorage.getItem("codespace_url") || ""; }
+    function setCodespaceUrl(v) { localStorage.setItem("codespace_url", v); }
+
     async function load() {
       const r = await fetch("./events.json?ts=" + Date.now());
       const list = await r.json();
-      const rows = document.getElementById("rows");
+      render(list);
+      return list;
+    }
+
+    function render(list) {
+      const term = (q.value || "").toLowerCase();
+      const filtered = list.filter(ev => {
+        if (!term) return true;
+        const hay = (ev.provider + " " + ev.id + " " + JSON.stringify(ev.payload)).toLowerCase();
+        return hay.includes(term);
+      });
       rows.innerHTML = "";
-      document.getElementById("info").textContent = "Total: " + list.length;
-      for (const ev of list) {
+      total.textContent = String(filtered.length);
+      for (const ev of filtered) {
         const tr = document.createElement("tr");
         tr.innerHTML = `
           <td>${new Date(ev.receivedAt).toLocaleString()}</td>
@@ -49,6 +82,28 @@
         rows.appendChild(tr);
       }
     }
+
+    async function syncNow() {
+      const base = codespace.value || getCodespaceUrl();
+      if (!base) { statusEl.textContent = "Set Codespace URL first"; return; }
+      syncBtn.disabled = true;
+      statusEl.textContent = "Syncing...";
+      try {
+        const r = await fetch(base.replace(/\/$/, "") + "/persist", { method: "POST" });
+        if (!r.ok) throw new Error("persist failed");
+        statusEl.textContent = "Persist triggered. Wait for Pages to deploy, then refresh.";
+      } catch (e) {
+        statusEl.textContent = "Sync error";
+      } finally {
+        syncBtn.disabled = false;
+      }
+    }
+
+    q.addEventListener("input", () => load());
+    syncBtn.addEventListener("click", syncNow);
+    saveBtn.addEventListener("click", () => { setCodespaceUrl(codespace.value.trim()); statusEl.textContent = "URL saved"; });
+    codespace.value = getCodespaceUrl() || "";
+
     load();
   </script>
 </body>
