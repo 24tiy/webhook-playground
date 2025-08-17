@@ -9,7 +9,7 @@ function signString(i: any) {
     p.originalReference || "",
     p.merchantAccountCode || "",
     p.merchantReference || "",
-    (p.amount && typeof p.amount.value !== "undefined" ? String(p.amount.value) : ""),
+    p.amount && typeof p.amount.value !== "undefined" ? String(p.amount.value) : "",
     (p.amount && p.amount.currency) || "",
     p.eventCode || "",
     typeof p.success === "string" ? p.success : p.success ? "true" : "false"
@@ -34,7 +34,8 @@ export function adyenWebhookHandler(cfg: { hmacKey: string }) {
     } catch {
       verified = false;
     }
-    const rec = saveEvent({ provider: "adyen", verified, headers: req.headers as any, payload: req.body });
+    const raw = (req as any).rawBody?.toString() || JSON.stringify(req.body || {});
+    const rec = saveEvent({ provider: "adyen", verified, headers: req.headers as any, payload: req.body, raw });
     persist().catch(() => {});
     res.json({ ok: true, id: rec.id, verified });
   };
