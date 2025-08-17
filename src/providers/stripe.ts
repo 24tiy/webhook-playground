@@ -1,43 +1,27 @@
-import Stripe from "stripe";
 import { Request, Response } from "express";
-import { saveEvent } from "../storage";
+import Stripe from "stripe";
+import { saveEvent, persist } from "../storage";
 
-const stripe = new Stripe(process.env.STRIPE_API_KEY || "", {
-  apiVersion: "2024-06-20",
-} as any);
-
-export function stripeWebhookHandler(endpointSecret?: string) {
+export function stripeWebhookHandler(endpointSecret: string) {
   return async (req: Request, res: Response) => {
+    let verified = false;
+    let payload: any = null;
+    const sig = req.headers["stripe-signature"] as string | undefined;
     try {
-      let verified = false;
-      let payload: any;
-
-      if (endpointSecret && req.headers["stripe-signature"]) {
-        const sig = req.header("Stripe-Signature") as string;
-        const evt = stripe.webhooks.constructEvent(
-          req.body,
-          sig,
-          endpointSecret
-        );
-        verified = true;
-        payload = evt;
-      } else {
-        payload =
-          Buffer.isBuffer(req.body)
-            ? JSON.parse(req.body.toString("utf8"))
-            : req.body;
+      if (!sig) throw new Error("missing_signature");
+      const event = Stripe.webhooks.constructEvent(req.body, sig, endpointSecret);
+      verified = true;
+      payload = event;
+    } catch {
+      verified = false;
+      try {
+        payload = JSON.parse(Buffer.isBuffer(req.body) ? req.body.toString("utf8") : String(req.body || "{}"));
+      } catch {
+        payload = { raw: String(req.body || "") };
       }
-
-      const saved = await saveEvent({
-        provider: "stripe",
-        verified,
-        headers: req.headers as any,
-        payload,
-      });
-
-      res.json({ ok: true, id: saved.id, verified });
-    } catch (err) {
-      res.status(400).json({ ok: false, error: "invalid_signature" });
     }
+    const rec = saveEvent({ provider: "stripe", verified, headers: req.headers as any, payload });
+    persist().catch(() => {});
+    res.json({ ok: true, id: rec.id, verified });
   };
 }
