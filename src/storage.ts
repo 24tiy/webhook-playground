@@ -1,50 +1,115 @@
 import fs from "fs";
+import { promises as fsp } from "fs";
 import path from "path";
-import { exec } from "child_process";
+import crypto from "crypto";
 
-const DATA_DIR = path.resolve(process.cwd(), "data");
-const EVENTS_DIR = path.join(DATA_DIR, "events");
-
-function ensure() {
-  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-  if (!fs.existsSync(EVENTS_DIR)) fs.mkdirSync(EVENTS_DIR, { recursive: true });
-}
-
-export type EventRecord = {
+export type StoredEvent = {
   id: string;
   provider: string;
   verified: boolean;
   receivedAt: string;
-  headers: Record<string, unknown>;
-  payload: unknown;
+  headers: Record<string, any>;
+  payload: any;
 };
 
-export function saveEvent(e: Omit<EventRecord, "id" | "receivedAt">) {
-  ensure();
-  const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const file = path.join(EVENTS_DIR, `${id}.json`);
-  const rec: EventRecord = { id, receivedAt: new Date().toISOString(), ...e };
-  fs.writeFileSync(file, JSON.stringify(rec, null, 2), "utf8");
-  return rec;
+const DATA_DIR = path.join(process.cwd(), "data", "events");
+const DOCS_DIR = path.join(process.cwd(), "docs", "events");
+const DOCS_INDEX = path.join(process.cwd(), "docs", "events.json");
+
+const sanitizeFileName = (s: string) =>
+  s.toLowerCase().replace(/[^a-z0-9-_]/g, "").slice(0, 60) || "evt";
+
+const newId = () =>
+  `${Date.now()}-${crypto.randomBytes(3).toString("base64url")}`;
+
+async function writeJsonAtomically(file: string, data: unknown) {
+  await fsp.mkdir(path.dirname(file), { recursive: true });
+  const tmp = `${file}.tmp`;
+  await fsp.writeFile(tmp, JSON.stringify(data, null, 2));
+  await fsp.rename(tmp, file);
 }
 
-export function listEvents(): EventRecord[] {
-  ensure();
-  if (!fs.existsSync(EVENTS_DIR)) return [];
-  const files = fs.readdirSync(EVENTS_DIR).filter(f => f.endsWith(".json"));
-  const list = files.map(f => JSON.parse(fs.readFileSync(path.join(EVENTS_DIR, f), "utf8")));
-  return list.sort((a, b) => (a.receivedAt < b.receivedAt ? 1 : -1));
+export async function saveEvent(input: {
+  provider: string;
+  verified: boolean;
+  headers: Record<string, any>;
+  payload: any;
+  forceId?: string;
+}): Promise<StoredEvent> {
+  const id = input.forceId || newId();
+  const safe = sanitizeFileName(id);
+  const file = path.join(DATA_DIR, `${safe}.json`);
+
+  const stored: StoredEvent = {
+    id,
+    provider: input.provider,
+    verified: input.verified,
+    receivedAt: new Date().toISOString(),
+    headers: input.headers || {},
+    payload: input.payload,
+  };
+
+  await writeJsonAtomically(file, stored);
+  return stored;
 }
 
-export function getEventById(id: string): EventRecord | null {
-  ensure();
-  const file = path.join(EVENTS_DIR, `${id}.json`);
-  if (!fs.existsSync(file)) return null;
-  return JSON.parse(fs.readFileSync(file, "utf8"));
+export async function listEvents(limit = 1000): Promise<StoredEvent[]> {
+  await fsp.mkdir(DATA_DIR, { recursive: true });
+  const files = (await fsp.readdir(DATA_DIR)).filter((f) => f.endsWith(".json"));
+  const items: StoredEvent[] = [];
+  for (const f of files) {
+    try {
+      const s = await fsp.readFile(path.join(DATA_DIR, f), "utf8");
+      items.push(JSON.parse(s));
+    } catch {}
+  }
+  items.sort((a, b) => (a.receivedAt < b.receivedAt ? 1 : -1));
+  return items.slice(0, limit);
 }
 
-export function persist(): Promise<void> {
-  return new Promise(resolve => {
-    exec('git pull --rebase origin main || true && git add data && git commit -m "events" || true && git push origin main', () => resolve());
-  });
+export async function getEventById(id: string): Promise<StoredEvent | null> {
+  const safe = sanitizeFileName(id);
+  const file = path.join(DATA_DIR, `${safe}.json`);
+  try {
+    const s = await fsp.readFile(file, "utf8");
+    return JSON.parse(s);
+  } catch {
+    return null;
+  }
+}
+
+function sanitizeForDocs(obj: any): any {
+  if (!process.env.SANITIZE_FOR_DOCS) return obj;
+  const clone = JSON.parse(JSON.stringify(obj));
+  const walk = (o: any) => {
+    if (!o || typeof o !== "object") return;
+    for (const k of Object.keys(o)) {
+      const key = k.toLowerCase();
+      const v = o[k];
+      if (
+        /(email|phone|authorization|client.*ip|card|iban|pan|address|account|token)/.test(
+          key
+        )
+      ) {
+        o[k] = "[redacted]";
+      } else if (typeof v === "object") {
+        walk(v);
+      }
+    }
+  };
+  walk(clone);
+  return clone;
+}
+
+export async function persist(): Promise<{ count: number }> {
+  const all = await listEvents(100000);
+  const lim = Number(process.env.DOCS_EVENTS_LIMIT || "500");
+  for (const e of all) {
+    const safe = sanitizeFileName(e.id);
+    const file = path.join(DOCS_DIR, `${safe}.json`);
+    await writeJsonAtomically(file, sanitizeForDocs(e));
+  }
+  const sliced = all.slice(0, lim).map((e) => sanitizeForDocs(e));
+  await writeJsonAtomically(DOCS_INDEX, sliced);
+  return { count: sliced.length };
 }
