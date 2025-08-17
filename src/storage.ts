@@ -1,43 +1,70 @@
 import fs from "fs";
 import path from "path";
+import crypto from "crypto";
 
-const DATA_DIR = path.resolve("data/events");
-fs.mkdirSync(DATA_DIR, { recursive: true });
-
-export type SavedEvent = {
+type EventRecord = {
   id: string;
+  receivedAt: string;
   provider: string;
   verified: boolean;
-  receivedAt: string;
-  headers: Record<string, any>;
+  headers: any;
   payload: any;
 };
 
-function fileId() {
-  const ts = Date.now();
-  const rnd = Math.random().toString(36).slice(2, 8);
-  return `${ts}-${rnd}`;
+const dataDir = path.join(process.cwd(), "data/events");
+const docsDir = path.join(process.cwd(), "docs/events");
+
+function ensureDir(p: string) {
+  fs.mkdirSync(p, { recursive: true });
 }
 
-export function saveEvent(e: Omit<SavedEvent, "id" | "receivedAt">): SavedEvent {
-  const id = fileId();
-  const rec: SavedEvent = {
+export function saveEvent(input: { provider: string; verified: boolean; headers: any; payload: any }): EventRecord {
+  ensureDir(dataDir);
+  const id = `${Date.now()}-${crypto.randomBytes(3).toString("base64url")}`;
+  const rec: EventRecord = {
     id,
-    provider: e.provider,
-    verified: e.verified,
     receivedAt: new Date().toISOString(),
-    headers: e.headers,
-    payload: e.payload
+    provider: input.provider,
+    verified: !!input.verified,
+    headers: input.headers,
+    payload: input.payload
   };
-  const tmp = path.join(DATA_DIR, `${id}.json.tmp`);
-  const fin = path.join(DATA_DIR, `${id}.json`);
-  fs.writeFileSync(tmp, JSON.stringify(rec, null, 2));
-  fs.renameSync(tmp, fin);
+  fs.writeFileSync(path.join(dataDir, `${id}.json`), JSON.stringify(rec, null, 2));
   return rec;
 }
 
-export function listEventFiles(limit = 200) {
-  const files = fs.readdirSync(DATA_DIR).filter(f => f.endsWith(".json"));
-  files.sort((a, b) => (a < b ? 1 : -1));
-  return files.slice(0, limit).map(f => path.join(DATA_DIR, f));
+export function listEvents(): EventRecord[] {
+  ensureDir(dataDir);
+  const files = fs.readdirSync(dataDir).filter((f) => f.endsWith(".json"));
+  const list: EventRecord[] = [];
+  for (const f of files) {
+    try {
+      const j = JSON.parse(fs.readFileSync(path.join(dataDir, f), "utf8"));
+      list.push(j);
+    } catch {}
+  }
+  list.sort((a, b) => (a.receivedAt < b.receivedAt ? 1 : -1));
+  return list;
+}
+
+export function getEventById(id: string): EventRecord | null {
+  const p = path.join(dataDir, `${id}.json`);
+  if (!fs.existsSync(p)) return null;
+  try {
+    return JSON.parse(fs.readFileSync(p, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+export async function persist(): Promise<void> {
+  ensureDir(dataDir);
+  ensureDir(docsDir);
+  for (const f of fs.readdirSync(dataDir)) {
+    if (f.endsWith(".json")) {
+      fs.copyFileSync(path.join(dataDir, f), path.join(docsDir, f));
+    }
+  }
+  const list = listEvents();
+  fs.writeFileSync(path.join(process.cwd(), "docs/events.json"), JSON.stringify(list, null, 2));
 }
