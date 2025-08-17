@@ -1,0 +1,10 @@
+{
+  "id": "1755428663383-pz1qi7",
+  "receivedAt": "2025-08-17T11:04:23.383Z",
+  "provider": "debug",
+  "verified": false,
+  "headers": {},
+  "payload": {
+    "ping": true
+  }
+}
