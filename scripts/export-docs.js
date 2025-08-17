@@ -3,14 +3,16 @@ const path = require("path");
 
 const srcDir = path.join(process.cwd(), "data", "events");
 const outDir = path.join(process.cwd(), "docs", "events");
+const indexFile = path.join(process.cwd(), "docs", "events.json");
 if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
 
 function redactHeaders(h) {
-  const deny = ["authorization","cookie","set-cookie","stripe-signature","paypal-transmission-sig","paypal-auth-algo","paypal-cert-url","paypal-transmission-id","paypal-transmission-time","x-api-key","x-signature","x-hmac-signature"];
+  const deny = new Set(["authorization","cookie","set-cookie","stripe-signature","paypal-transmission-sig","paypal-auth-algo","paypal-cert-url","paypal-transmission-id","paypal-transmission-time","x-api-key","x-signature","x-hmac-signature"]);
   const out = {};
   for (const k of Object.keys(h || {})) {
     const low = k.toLowerCase();
-    if (deny.includes(low) || low.includes("secret") || low.includes("token")) continue;
+    if (deny.has(low)) continue;
+    if (low.includes("secret") || low.includes("token")) continue;
     out[k] = h[k];
   }
   return out;
@@ -22,7 +24,7 @@ function redactPayload(obj) {
   const out = {};
   for (const k of Object.keys(obj)) {
     const low = k.toLowerCase();
-    if (low.includes("secret") || low.includes("token") || low.includes("signature") || low.includes("password") || low.includes("client_secret")) continue;
+    if (low.includes("secret") || low.includes("token") || low.includes("password") || low.includes("client_secret")) continue;
     out[k] = redactPayload(obj[k]);
   }
   return out;
@@ -31,10 +33,7 @@ function redactPayload(obj) {
 function readAll() {
   if (!fs.existsSync(srcDir)) return [];
   return fs.readdirSync(srcDir).filter(f => f.endsWith(".json")).map(f => {
-    try {
-      const j = JSON.parse(fs.readFileSync(path.join(srcDir, f), "utf8"));
-      return j;
-    } catch { return null; }
+    try { return JSON.parse(fs.readFileSync(path.join(srcDir, f), "utf8")); } catch { return null; }
   }).filter(Boolean);
 }
 
@@ -53,5 +52,5 @@ for (const it of items) {
   const type = safe.payload?.type || safe.payload?.eventCode || safe.payload?.event_type || "";
   forIndex.push({ id: safe.id, receivedAt: safe.receivedAt, provider: safe.provider, verified: safe.verified, type });
 }
-fs.writeFileSync(path.join(process.cwd(), "docs", "events.json"), JSON.stringify(forIndex, null, 2), "utf8");
+fs.writeFileSync(indexFile, JSON.stringify(forIndex, null, 2), "utf8");
 console.log(JSON.stringify({ ok: true, count: forIndex.length }));
