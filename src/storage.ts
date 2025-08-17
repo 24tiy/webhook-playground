@@ -1,31 +1,43 @@
 import fs from "fs";
 import path from "path";
-import { randomBytes } from "crypto";
 
-const dir = path.join(process.cwd(), "data", "events");
-if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+const DATA_DIR = path.resolve("data/events");
+fs.mkdirSync(DATA_DIR, { recursive: true });
 
 export type SavedEvent = {
   id: string;
-  receivedAt: string;
   provider: string;
   verified: boolean;
-  headers: any;
+  receivedAt: string;
+  headers: Record<string, any>;
   payload: any;
 };
 
-const mem: SavedEvent[] = [];
+function fileId() {
+  const ts = Date.now();
+  const rnd = Math.random().toString(36).slice(2, 8);
+  return `${ts}-${rnd}`;
+}
 
 export function saveEvent(e: Omit<SavedEvent, "id" | "receivedAt">): SavedEvent {
-  const id = Date.now() + "-" + randomBytes(3).toString("hex");
-  const receivedAt = new Date().toISOString();
-  const rec: SavedEvent = { id, receivedAt, ...e };
-  mem.push(rec);
-  const file = path.join(dir, `${id}.json`);
-  fs.writeFileSync(file, JSON.stringify(rec, null, 2));
+  const id = fileId();
+  const rec: SavedEvent = {
+    id,
+    provider: e.provider,
+    verified: e.verified,
+    receivedAt: new Date().toISOString(),
+    headers: e.headers,
+    payload: e.payload
+  };
+  const tmp = path.join(DATA_DIR, `${id}.json.tmp`);
+  const fin = path.join(DATA_DIR, `${id}.json`);
+  fs.writeFileSync(tmp, JSON.stringify(rec, null, 2));
+  fs.renameSync(tmp, fin);
   return rec;
 }
 
-export function listEvents(limit = 100): SavedEvent[] {
-  return mem.slice(-limit).reverse();
+export function listEventFiles(limit = 200) {
+  const files = fs.readdirSync(DATA_DIR).filter(f => f.endsWith(".json"));
+  files.sort((a, b) => (a < b ? 1 : -1));
+  return files.slice(0, limit).map(f => path.join(DATA_DIR, f));
 }
