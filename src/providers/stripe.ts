@@ -1,23 +1,23 @@
-import { Request } from "express";
+import type { Request } from "express";
 import Stripe from "stripe";
-import { Provider } from "./base.js";
+import { Provider, ProviderResult } from "./base.js";
 
-export function stripeProvider(secret: string): Provider {
-  const stripe = new Stripe("", { apiVersion: "2023-10-16" });
-  return {
-    identify() {
-      return "stripe";
-    },
-    async verify(req: Request) {
-      try {
-        const sig = req.headers["stripe-signature"] as string;
-        if (!sig) return false;
-        const raw = (req as any).rawBody as Buffer;
-        stripe.webhooks.constructEvent(raw, sig, secret);
-        return true;
-      } catch {
-        return false;
-      }
+const endpointSecret = process.env.STRIPE_ENDPOINT_SECRET || "";
+const stripe = new Stripe("sk_test_0", { apiVersion: "2023-10-16" });
+
+export const stripeProvider: Provider = {
+  async verify(req: Request): Promise<ProviderResult> {
+    const sig = String(req.headers["stripe-signature"] || "");
+    if (!endpointSecret || !sig) {
+      const raw = JSON.parse(req.body.toString("utf8") || "{}");
+      return { verified: false, payload: raw };
     }
-  };
-}
+    try {
+      const event = stripe.webhooks.constructEvent(req.body, sig, endpointSecret);
+      return { verified: true, payload: event };
+    } catch {
+      const raw = JSON.parse(req.body.toString("utf8") || "{}");
+      return { verified: false, payload: raw };
+    }
+  }
+};
