@@ -1,46 +1,32 @@
+import { Request } from "express";
 import crypto from "crypto";
-import { Request, Response } from "express";
-import { saveEvent, persist } from "../storage";
+import { Provider } from "./base.js";
 
-function signString(v: any) {
-  const arr = [
-    v.pspReference || "",
-    v.originalReference || "",
-    v.merchantAccountCode || "",
-    v.merchantReference || "",
-    v.amount?.value?.toString() || "",
-    v.amount?.currency || "",
-    v.eventCode || "",
-    v.success || ""
-  ];
-  return arr.join(":");
-}
-
-function verifyItem(item: any, hmacKeyBase64: string) {
-  const v = item?.NotificationRequestItem || item;
-  const given = v?.additionalData?.hmacSignature || v?.additionalData?.["hmacSignature"];
-  if (!given) return false;
-  const key = Buffer.from(hmacKeyBase64, "base64");
-  const data = signString(v);
-  const mac = crypto.createHmac("sha256", key).update(data, "utf8").digest("base64");
-  return mac === given;
-}
-
-export function adyenWebhookHandler(hmacKeyBase64: string) {
-  return async (req: Request, res: Response) => {
-    let verified = false;
-    let body = req.body;
-    try {
-      if (Array.isArray(body?.notificationItems)) {
-        verified = body.notificationItems.every((x: any) => verifyItem(x, hmacKeyBase64));
-      } else {
-        verified = verifyItem(body, hmacKeyBase64);
+export function adyenProvider(hmacKeyBase64: string): Provider {
+  return {
+    identify() {
+      return "adyen";
+    },
+    async verify(req: Request) {
+      try {
+        const item = req.body?.notificationItems?.[0]?.NotificationRequestItem;
+        if (!item) return false;
+        const payload = [
+          item.pspReference || "",
+          item.originalReference || "",
+          item.merchantAccountCode || "",
+          item.merchantReference || "",
+          item.amount?.value ?? "",
+          item.amount?.currency ?? "",
+          item.eventCode || "",
+          item.success || ""
+        ].join(":");
+        const mac = crypto.createHmac("sha256", Buffer.from(hmacKeyBase64, "base64")).update(payload, "utf8").digest("base64");
+        const sig = item.additionalData?.hmacSignature || item.additionalData?.["hmacSignature"];
+        return mac === sig;
+      } catch {
+        return false;
       }
-    } catch {
-      verified = false;
     }
-    const rec = saveEvent({ provider: "adyen", verified, headers: req.headers as any, payload: body });
-    persist().catch(() => {});
-    res.json({ ok: true, id: rec.id, verified });
   };
 }
