@@ -8,7 +8,7 @@
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "persist": "git pull --rebase origin main || true && git add data && git commit -m \"events\" || true && git push origin main"
+    "persist": "git pull --rebase origin main || true && mkdir -p docs/events && cp -R data/events/. docs/events/ 2>/dev/null || true && node -e \"const fs=require(\\\"fs\\\");const p=\\\"docs/events\\\";let list=[];if(fs.existsSync(p)){for(const f of fs.readdirSync(p)){if(f.endsWith(\\\".json\\\")){try{list.push(JSON.parse(fs.readFileSync(`${p}/${f}`,\\\"utf8\\\")));}catch{}}}}list.sort((a,b)=>a.receivedAt<b.receivedAt?1:-1);fs.writeFileSync(\\\"docs/events.json\\\",JSON.stringify(list,null,2));\" && git add data docs && git commit --allow-empty -m \"events\" && git push origin main"
   },
   "dependencies": {
     "axios": "^1.7.2",
