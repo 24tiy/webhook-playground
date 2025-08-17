@@ -9,6 +9,7 @@ type EventRecord = {
   verified: boolean;
   headers: any;
   payload: any;
+  raw?: string;
 };
 
 const dataDir = path.join(process.cwd(), "data/events");
@@ -18,7 +19,7 @@ function ensureDir(p: string) {
   fs.mkdirSync(p, { recursive: true });
 }
 
-export function saveEvent(input: { provider: string; verified: boolean; headers: any; payload: any }): EventRecord {
+export function saveEvent(input: { provider: string; verified: boolean; headers: any; payload: any; raw?: string }): EventRecord {
   ensureDir(dataDir);
   const id = `${Date.now()}-${crypto.randomBytes(3).toString("base64url")}`;
   const rec: EventRecord = {
@@ -27,7 +28,8 @@ export function saveEvent(input: { provider: string; verified: boolean; headers:
     provider: input.provider,
     verified: !!input.verified,
     headers: input.headers,
-    payload: input.payload
+    payload: input.payload,
+    raw: input.raw
   };
   fs.writeFileSync(path.join(dataDir, `${id}.json`), JSON.stringify(rec, null, 2));
   return rec;
