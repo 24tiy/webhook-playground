@@ -1,100 +1,57 @@
 import { Request, Response } from "express";
-import { saveEvent } from "../storage";
+import { saveEvent, persist } from "../storage";
 
-type Env = "sandbox" | "live";
-
-function apiBase(env: Env) {
-  return env === "live" ? "https://api-m.paypal.com" : "https://api-m.sandbox.paypal.com";
-}
-
-let cachedToken = "";
-let tokenExp = 0;
-
-async function withTimeout<T>(p: Promise<T>, ms: number) {
-  const t = new Promise<never>((_, rej) => setTimeout(() => rej(new Error("timeout")), ms));
-  return Promise.race([p, t]);
-}
-
-async function getToken(clientId: string, secret: string, env: Env) {
-  const now = Date.now();
-  if (cachedToken && now < tokenExp - 10_000) return cachedToken;
+async function token(clientId: string, secret: string, env: "sandbox" | "live") {
+  const base = env === "live" ? "https://api-m.paypal.com" : "https://api-m.sandbox.paypal.com";
   const creds = Buffer.from(`${clientId}:${secret}`).toString("base64");
-  const res = await withTimeout(
-    fetch(apiBase(env) + "/v1/oauth2/token", {
-      method: "POST",
-      headers: {
-        "content-type": "application/x-www-form-urlencoded",
-        accept: "application/json",
-        authorization: `Basic ${creds}`
-      },
-      body: "grant_type=client_credentials"
-    }),
-    8000
-  );
-  const j = await res.json();
-  cachedToken = j.access_token || "";
-  const expiresIn = Number(j.expires_in || 300);
-  tokenExp = now + expiresIn * 1000;
-  return cachedToken;
+  const r = await fetch(base + "/v1/oauth2/token", {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json", authorization: `Basic ${creds}` },
+    body: "grant_type=client_credentials"
+  } as any);
+  const j = await r.json();
+  return j.access_token as string;
 }
 
-async function verifySignature(args: {
-  webhookId: string;
-  transmissionId: string;
-  timestamp: string;
-  algorithm: string;
-  certUrl: string;
-  transmissionSig: string;
-  body: any;
-  clientId: string;
-  clientSecret: string;
-  env: Env;
-}) {
-  const token = await getToken(args.clientId, args.clientSecret, args.env);
-  const res = await withTimeout(
-    fetch(apiBase(args.env) + "/v1/notifications/verify-webhook-signature", {
-      method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-      body: JSON.stringify({
-        auth_algo: args.algorithm,
-        cert_url: args.certUrl,
-        transmission_id: args.transmissionId,
-        transmission_sig: args.transmissionSig,
-        transmission_time: args.timestamp,
-        webhook_id: args.webhookId,
-        webhook_event: args.body
-      })
-    }),
-    8000
-  );
-  const j = await res.json();
-  return j && j.verification_status === "SUCCESS";
+async function verify(args: { webhookId: string; transmissionId: string; timestamp: string; algorithm: string; certUrl: string; transmissionSig: string; body: any; clientId: string; secret: string; env: "sandbox" | "live" }) {
+  const base = args.env === "live" ? "https://api-m.paypal.com" : "https://api-m.sandbox.paypal.com";
+  const t = await token(args.clientId, args.secret, args.env);
+  const r = await fetch(base + "/v1/notifications/verify-webhook-signature", {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${t}` },
+    body: JSON.stringify({
+      auth_algo: args.algorithm,
+      cert_url: args.certUrl,
+      transmission_id: args.transmissionId,
+      transmission_sig: args.transmissionSig,
+      transmission_time: args.timestamp,
+      webhook_id: args.webhookId,
+      webhook_event: args.body
+    })
+  });
+  const j = await r.json();
+  return j.verification_status === "SUCCESS";
 }
 
-export function paypalWebhookHandler(cfg: {
-  webhookId: string;
-  clientId: string;
-  clientSecret: string;
-  env: Env;
-}) {
+export function paypalWebhookHandler(cfg: { webhookId: string; clientId: string; clientSecret: string; env: "sandbox" | "live" }) {
+  const strict = (process.env.STRICT_VERIFY || "true").toLowerCase() !== "false";
+
   return async (req: Request, res: Response) => {
     const h = req.headers as any;
-    const transmissionId = h["paypal-transmission-id"] || "";
-    const timestamp = h["paypal-transmission-time"] || "";
-    const algorithm = h["paypal-auth-algo"] || "";
-    const certUrl = h["paypal-cert-url"] || "";
-    const transmissionSig = h["paypal-transmission-sig"] || "";
+    const transmissionId = h["paypal-transmission-id"];
+    const timestamp = h["paypal-transmission-time"];
+    const algorithm = h["paypal-auth-algo"];
+    const certUrl = h["paypal-cert-url"];
+    const transmissionSig = h["paypal-transmission-sig"];
+
+    if (strict && (!transmissionId || !timestamp || !algorithm || !certUrl || !transmissionSig)) {
+      return res.status(400).json({ ok: false, error: "missing_headers" });
+    }
+
     let verified = false;
     try {
-      if (
-        cfg.webhookId &&
-        transmissionId &&
-        timestamp &&
-        algorithm &&
-        certUrl &&
-        transmissionSig
-      ) {
-        verified = await verifySignature({
+      if (cfg.webhookId && cfg.clientId && cfg.clientSecret && transmissionId && timestamp && algorithm && certUrl && transmissionSig) {
+        verified = await verify({
           webhookId: cfg.webhookId,
           transmissionId,
           timestamp,
@@ -103,14 +60,19 @@ export function paypalWebhookHandler(cfg: {
           transmissionSig,
           body: req.body,
           clientId: cfg.clientId,
-          clientSecret: cfg.clientSecret,
+          secret: cfg.clientSecret,
           env: cfg.env
         });
+      } else if (strict) {
+        return res.status(500).json({ ok: false, error: "server_misconfigured" });
       }
     } catch {
+      if (strict) return res.status(400).json({ ok: false, error: "invalid_signature" });
       verified = false;
     }
-    const rec = await saveEvent({ provider: "paypal", verified, headers: req.headers as any, payload: req.body });
+
+    const rec = saveEvent({ provider: "paypal", verified, headers: req.headers as any, payload: req.body });
+    persist().catch(() => {});
     res.json({ ok: true, id: rec.id, verified });
   };
 }
