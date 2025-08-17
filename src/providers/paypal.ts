@@ -33,7 +33,8 @@ export function paypalWebhookHandler(cfg: { webhookId: string; clientId: string;
     } catch {
       verified = false;
     }
-    const rec = saveEvent({ provider: "paypal", verified, headers: req.headers as any, payload: req.body });
+    const raw = (req as any).rawBody?.toString() || JSON.stringify(req.body || {});
+    const rec = saveEvent({ provider: "paypal", verified, headers: req.headers as any, payload: req.body, raw });
     persist().catch(() => {});
     res.json({ ok: true, id: rec.id, verified });
   };
