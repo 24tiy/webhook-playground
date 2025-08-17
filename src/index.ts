@@ -9,14 +9,19 @@ import { listEvents, getEventById, saveEvent, persist } from "./storage.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-
 const app = express();
-
 const PORT = Number(process.env.PORT || 3000);
 
 app.post("/webhooks/stripe", express.raw({ type: "*/*" }), stripeWebhookHandler({ endpointSecret: process.env.STRIPE_ENDPOINT_SECRET || "" }));
 
-app.use(express.json({ limit: "1mb" }));
+app.use(
+  express.json({
+    limit: "1mb",
+    verify: (req: any, _res, buf) => {
+      req.rawBody = buf;
+    }
+  })
+);
 
 app.post(
   "/webhooks/paypal",
@@ -32,7 +37,7 @@ app.post("/webhooks/adyen", adyenWebhookHandler({ hmacKey: process.env.ADYEN_HMA
 
 app.get("/", (_req, res) => res.json({ ok: true }));
 
-app.get("/events", (_req, res) => res.json({ events: listEvents() }));
+app.get("/events", (_req, res) => res.json(listEvents()));
 
 app.get("/events/:id", (req, res) => {
   const ev = getEventById(req.params.id);
@@ -40,8 +45,8 @@ app.get("/events/:id", (req, res) => {
   res.json(ev);
 });
 
-app.post("/__test_write", (req, res) => {
-  const rec = saveEvent({ provider: "test", verified: false, headers: req.headers as any, payload: req.body || { ping: true } });
+app.post("/__test_write", (req: Request, res: Response) => {
+  const rec = saveEvent({ provider: "debug", verified: false, headers: req.headers as any, payload: req.body || { ping: true }, raw: (req as any).rawBody?.toString() || "" });
   persist().catch(() => {});
   res.json({ ok: true, id: rec.id });
 });
